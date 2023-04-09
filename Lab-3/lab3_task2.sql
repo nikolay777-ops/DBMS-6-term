@@ -115,9 +115,11 @@ BEGIN
             DBMS_OUTPUT.PUT_LINE(choice || ': ' || dev_schema_iter.NAME);
 
             IF choice = 'FUNCTION' THEN
-                DBMS_OUTPUT.PUT_LINE('DDL function: ');
+                DDL_CREATE_FUNCTION(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                 DBMS_OUTPUT.PUT_LINE('DDL function: ');
             ELSIF choice = 'PROCEDURE' THEN
-                DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
+                DDL_CREATE_PROCEDURE(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                 DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
             end if;
 
         ELSE
@@ -153,9 +155,11 @@ BEGIN
                     IF arg1 <> arg2 or type1 <> type2 THEN
                         DBMS_OUTPUT.PUT_LINE(choice || ': ' || dev_schema_iter.NAME);
                         IF choice = 'FUNCTION' THEN
-                            DBMS_OUTPUT.PUT_LINE('DDL function: ');
+                            DDL_CREATE_FUNCTION(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                             DBMS_OUTPUT.PUT_LINE('DDL function: ');
                         ELSIF choice = 'PROCEDURE' THEN
-                            DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
+                            DDL_CREATE_PROCEDURE(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                             DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
                         end if;
                         checked := TRUE;
                         exit;
@@ -167,9 +171,11 @@ BEGIN
                 close prod_args;
             ELSE
                 IF choice = 'FUNCTION' THEN
-                    DBMS_OUTPUT.PUT_LINE('DDL function: ');
+                    DDL_CREATE_FUNCTION(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                     DBMS_OUTPUT.PUT_LINE('DDL function: ');
                 ELSIF choice = 'PROCEDURE' THEN
-                    DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
+                    DDL_CREATE_PROCEDURE(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                     DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
                 end if;
             END IF;
 
@@ -198,9 +204,11 @@ BEGIN
 
                         IF line1 <> line2 THEN
                             IF choice = 'FUNCTION' THEN
-                                DBMS_OUTPUT.PUT_LINE('DDL function: ');
+                                DDL_CREATE_FUNCTION(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                                 DBMS_OUTPUT.PUT_LINE('DDL function: ');
                             ELSIF choice = 'PROCEDURE' THEN
-                                DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
+                                DDL_CREATE_PROCEDURE(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                                 DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
                             end if;
                             exit;
                         END IF;
@@ -212,9 +220,11 @@ BEGIN
 
                     ELSE
                         IF choice = 'FUNCTION' THEN
-                            DBMS_OUTPUT.PUT_LINE('DDL function: ');
+                            DDL_CREATE_FUNCTION(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                             DBMS_OUTPUT.PUT_LINE('DDL function: ');
                         ELSIF choice = 'PROCEDURE' THEN
-                            DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
+                            DDL_CREATE_PROCEDURE(dev_schema_name, dev_schema_iter.NAME, prod_schema_name);
+--                             DBMS_OUTPUT.PUT_LINE('DDL procedure: ');
                         end if;
                 END IF;
             END IF;
@@ -256,6 +266,8 @@ BEGIN
         WHERE OWNER = prod_schema_name and INDEX_NAME = dev_index.INDEX_NAME;
         IF amount = 0 THEN
             DBMS_OUTPUT.PUT_LINE('INDEX: ' || dev_index.INDEX_NAME);
+            DDL_CREATE_INDEX(dev_schema_name, prod_schema_name,
+                                dev_index.INDEX_NAME);
             -- ddl create index
         ELSE
             SELECT INDEX_TYPE, TABLE_NAME, UNIQUENESS
@@ -306,6 +318,8 @@ BEGIN
 
                         IF column_name1 <> column_name2 THEN
                             DBMS_OUTPUT.PUT_LINE('INDEX: '|| dev_index.INDEX_NAME);
+                            DDL_CREATE_INDEX(dev_schema_name, prod_schema_name,
+                                dev_index.INDEX_NAME);
                             -- ddl create index
                             exit;
                         END IF;
@@ -316,11 +330,15 @@ BEGIN
 
                 ELSE
                     DBMS_OUTPUT.PUT_LINE('INDEX: ' || dev_index.INDEX_NAME);
+                    DDL_CREATE_INDEX(dev_schema_name, prod_schema_name,
+                                dev_index.INDEX_NAME);
                     -- ddl create index
                 end if;
 
             ELSE
                 DBMS_OUTPUT.PUT_LINE('INDEX: ' || dev_index.INDEX_NAME);
+                DDL_CREATE_INDEX(dev_schema_name, prod_schema_name,
+                                dev_index.INDEX_NAME);
                 -- ddl create index
             END IF;
         END IF;
@@ -354,6 +372,7 @@ BEGIN
 
         IF amount = 0 THEN
             DBMS_OUTPUT.PUT_LINE('PACKAGE: ' || dev_package.NAME);
+            DDL_CREATE_PACKAGE(dev_schema_name, prod_schema_name, dev_package.NAME);
             -- ddl package
         ELSE
             SELECT COUNT(*) INTO lines_amount1
@@ -389,6 +408,7 @@ BEGIN
 
                     IF line1 <> line2 THEN
                         DBMS_OUTPUT.PUT_LINE('PACKAGE: ' || dev_package.NAME);
+                        DDL_CREATE_PACKAGE(dev_schema_name, prod_schema_name, dev_package.NAME);
                         -- ddl create package
                         exit;
                     end if;
@@ -399,6 +419,7 @@ BEGIN
 
             ELSE
                 DBMS_OUTPUT.PUT_LINE('PACKAGE: ' || dev_package.NAME);
+                DDL_CREATE_PACKAGE(dev_schema_name, prod_schema_name, dev_package.NAME);
                 -- ddl create package
             END IF;
         end if;
@@ -466,3 +487,20 @@ BEGIN
     get_packages('DEV_SCHEMA', 'PROD_SCHEMA');
 end;
 
+CREATE OR REPLACE PROCEDURE dev_schema.new_procedure(id NUMBER)
+IS
+BEGIN
+    DBMS_OUTPUT.PUT_LINE(id);
+end;
+
+CREATE OR REPLACE PROCEDURE prod_schema.new_procedure(id NUMBER)
+IS
+BEGIN
+    IF id = 4 THEN
+        DBMS_OUTPUT.PUT(id-1);
+    end if;
+end;
+
+BEGIN
+    get_funcs_procs('DEV_SCHEMA', 'PROD_SCHEMA', 'PROCEDURE');
+end;
