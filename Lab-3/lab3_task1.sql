@@ -53,6 +53,10 @@ grant SELECT ANY DICTIONARY to prod_schema;
 -- task 1
 -- initialize priority table
 
+DROP TABLE tables_priority;
+
+SELECT * FROM tables_priority;
+
 CREATE GLOBAL TEMPORARY TABLE tables_priority
 (
     id NUMBER UNIQUE NOT NULL,
@@ -61,6 +65,7 @@ CREATE GLOBAL TEMPORARY TABLE tables_priority
     priority NUMBER
 );
 
+DROP SEQUENCE tab_priority_seq;
 CREATE SEQUENCE tab_priority_seq START WITH 1;
 
 CREATE OR REPLACE TRIGGER tab_priority_auto_increment
@@ -86,8 +91,6 @@ BEGIN
     WHERE OWNER = schema AND CONSTRAINT_TYPE = 'R'
     AND TABLE_NAME = tab1 AND LENGTH(R_CONSTRAINT_NAME) > 0;
 
-    DBMS_OUTPUT.PUT_LINE('fks count: ' || fks_count);
-
     IF fks_count = 0 THEN
         RETURN 'FALSE';
     ELSIF fks_count > 0 THEN
@@ -95,22 +98,6 @@ BEGIN
     end if;
     RETURN 'NULL';
 END;
-
-DECLARE
-    cursor crs
-    IS
-    SELECT *
-    FROM ALL_CONSTRAINTS
-    WHERE OWNER = 'DEV_SCHEMA' AND TABLE_NAME = 'TAB3'
-    AND LENGTH(R_CONSTRAINT_NAME) > 0;
-
-BEGIN
-    FOR c in crs LOOP
-        DBMS_OUTPUT.PUT_LINE(c.R_CONSTRAINT_NAME);
-        end loop;
-
-end;
-
 
 CREATE OR REPLACE FUNCTION get_rel_tab(const_name VARCHAR2)
 RETURN VARCHAR2
@@ -130,16 +117,25 @@ IS
     res VARCHAR2(20);
     rel_tab_name VARCHAR2(30);
     temp_tab_name NUMBER;
+    check_fk BOOLEAN := FALSE;
 
-    CURSOR rels
+    CURSOR rels(tab_name VARCHAR2)
     IS
     SELECT *
     FROM ALL_CONSTRAINTS
-    WHERE OWNER = schema AND TABLE_NAME = tab
+    WHERE OWNER = schema AND TABLE_NAME = tab_name
     AND LENGTH(R_CONSTRAINT_NAME) > 0;
+
+    CURSOR rls(tb_nm VARCHAR2)
+    IS
+    SELECT *
+    FROM ALL_CONSTRAINTS
+    WHERE OWNER = schema AND TABLE_NAME = tb_nm
+    AND LENGTH(R_CONSTRAINT_NAME) > 0;
+
 BEGIN
     res := has_fk(schema, tab);
-    DBMS_OUTPUT.PUT_LINE('res: ' || res);
+--     DBMS_OUTPUT.PUT_LINE('Table check: ' || tab);
     if res = 'FALSE' THEN
         SELECT COUNT(table_name) INTO temp_tab_name
         FROM tables_priority
@@ -151,9 +147,9 @@ BEGIN
         end if;
 
     ELSIF res = 'TRUE' THEN
-        DBMS_OUTPUT.PUT_LINE('schema: ' || schema || ' tab: '|| tab);
+--         DBMS_OUTPUT.PUT_LINE('schema: ' || schema || ' tab: '|| tab);
 
-        for r in rels
+        for r in rels(tab)
             LOOP
                 rel_tab_name := get_rel_tab(r.R_CONSTRAINT_NAME);
                 res := has_fk(schema, rel_tab_name);
@@ -171,11 +167,19 @@ BEGIN
                     WHERE table_name = rel_tab_name and schema_name = schema;
 
                     IF temp_tab_name = 0 THEN
-                        INSERT INTO tables_priority VALUES (0, rel_tab_name, schema, 1);
+                        INSERT INTO tables_priority VALUES (0, rel_tab_name, schema, 0);
                     END IF;
-    --                 DBMS_OUTPUT.PUT_LINE('You can create a table: '|| rel_tab_name);
+--                     DBMS_OUTPUT.PUT_LINE('You can create a table: '|| rel_tab_name);
                 ELSE
-                    DBMS_OUTPUT.PUT_LINE('You have a circle relationship: ' || tab || ' <---> ' || rel_tab_name );
+                    FOR rl in rls(rel_tab_name)
+                    LOOP
+                        IF rl.TABLE_NAME = rel_tab_name THEN
+                            DBMS_OUTPUT.PUT_LINE('You have a circle relationship: ' || tab || ' <---> ' || rel_tab_name );
+                            RETURN;
+                        end if;
+                    END LOOP;
+                    INSERT INTO tables_priority VALUES (0, rel_tab_name, schema, 1);
+                    INSERT INTO tables_priority VALUES (0, tab, schema, 2);
                 end if;
             END LOOP;
     end if;
@@ -189,6 +193,12 @@ IS
     IS
     SELECT * FROM ALL_TABLES
     WHERE OWNER = dev_schema_name;
+
+    CURSOR ddl_tab_create
+    IS
+    SELECT TABLE_NAME
+    FROM tables_priority
+    ORDER BY priority;
 
     columns_amount1 NUMBER;
     columns_amount2 NUMBER;
@@ -218,103 +228,126 @@ IS
     search_condition2 all_constraints.search_condition%TYPE;
 
     checked BOOLEAN;
+    amount NUMBER;
 BEGIN
     FOR dev_schema_table IN dev_schema_tables
     LOOP
         checked := false;
-        SELECT COUNT(*) INTO columns_amount1
-        FROM ALL_TABLES
-        WHERE OWNER = dev_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME;
-
-        SELECT COUNT(*) INTO columns_amount2
+        SELECT COUNT(*) INTO amount
         FROM ALL_TABLES
         WHERE OWNER = prod_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME;
-
-        IF columns_amount1 = columns_amount2 THEN
-            OPEN dev_table_columns FOR
-                SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, NULLABLE
-                FROM ALL_TAB_COLUMNS
-                WHERE OWNER = dev_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME
-                ORDER BY COLUMN_NAME;
-
-            OPEN prod_table_columns FOR
-                SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, NULLABLE
-                FROM ALL_TAB_COLUMNS
-                WHERE OWNER = prod_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME
-                ORDER BY COLUMN_NAME;
-
-            LOOP
-                FETCH dev_table_columns INTO column_name1, data_type1, data_length1, nullable1;
-                FETCH prod_table_columns INTO column_name2, data_type2, data_length2, nullable2;
-
-                IF column_name1 <> column_name2 OR data_type1 <> data_type2
-                       OR data_length1 <> data_length2 OR nullable1 <> nullable2
-                    THEN
-                        priority_check(dev_schema_name, dev_schema_table.table_name);
-                        DBMS_OUTPUT.PUT_LINE('different columns table: ' || dev_schema_table.table_name);
-                        checked := TRUE;
-                        exit;
-                END IF;
-                exit when dev_table_columns%NOTFOUND and prod_table_columns%NOTFOUND;
---                 DBMS_OUTPUT.PUT_LINE('TABLE LOOP: ');
-            END LOOP;
-            CLOSE dev_table_columns;
-            CLOSE prod_table_columns;
-
-            ELSE
-                DBMS_OUTPUT.PUT_LINE('Different tables: ' || dev_schema_table.TABLE_NAME);
-                priority_check(dev_schema_name, dev_schema_table.table_name);
-            END IF;
-
-        IF checked = FALSE THEN
-
-            SELECT COUNT(*) INTO constraints_amount1
-            FROM ALL_CONSTRAINTS
+        IF amount = 0 THEN
+            DBMS_OUTPUT.PUT_LINE('TABLE: ' || dev_schema_table.TABLE_NAME);
+            ddl_create_table(dev_schema_name, prod_schema_name, dev_schema_table.TABLE_NAME);
+        ELSE
+            SELECT COUNT(*) INTO columns_amount1
+            FROM ALL_TABLES
             WHERE OWNER = dev_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME;
 
-            SELECT COUNT(*) INTO constraints_amount2
-            FROM ALL_CONSTRAINTS
+            SELECT COUNT(*) INTO columns_amount2
+            FROM ALL_TABLES
             WHERE OWNER = prod_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME;
 
-            IF constraints_amount1 = constraints_amount2 THEN
+            IF columns_amount1 = columns_amount2 THEN
                 OPEN dev_table_columns FOR
-                    SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, SEARCH_CONDITION
-                    FROM ALL_CONSTRAINTS
-                    WHERE OWNER = dev_schema_name and TABLE_NAME = dev_schema_table.TABLE_NAME
-                    ORDER BY CONSTRAINT_NAME;
+                    SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, NULLABLE
+                    FROM ALL_TAB_COLUMNS
+                    WHERE OWNER = dev_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME
+                    ORDER BY COLUMN_NAME;
 
                 OPEN prod_table_columns FOR
-                    SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, SEARCH_CONDITION
-                    FROM ALL_CONSTRAINTS
-                    WHERE OWNER = prod_schema_name and TABLE_NAME = dev_schema_table.TABLE_NAME
-                    ORDER BY CONSTRAINT_NAME;
+                    SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, NULLABLE
+                    FROM ALL_TAB_COLUMNS
+                    WHERE OWNER = prod_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME
+                    ORDER BY COLUMN_NAME;
 
                 LOOP
-                    FETCH dev_table_columns INTO constraint_name1, constraint_type1, search_condition1;
-                    FETCH prod_table_columns INTO constraint_name2, constraint_type2, search_condition2;
+                    FETCH dev_table_columns INTO column_name1, data_type1, data_length1, nullable1;
+                    FETCH prod_table_columns INTO column_name2, data_type2, data_length2, nullable2;
 
-                    IF constraint_name1 <> constraint_name2 OR constraint_type1 <> constraint_type2
-                           OR search_condition1 <> search_condition2 THEN
-                        priority_check(dev_schema_name, dev_schema_table.table_name);
-                        DBMS_OUTPUT.PUT_LINE('constraint structure table: ' || dev_schema_table.TABLE_NAME);
-                        exit;
+                    IF column_name1 <> column_name2 OR data_type1 <> data_type2
+                           OR data_length1 <> data_length2 OR nullable1 <> nullable2
+                        THEN
+                            priority_check(dev_schema_name, dev_schema_table.table_name);
+--                             DBMS_OUTPUT.PUT_LINE('different columns table: ' || dev_schema_table.table_name);
+--                             ddl_create_table(dev_schema_name, prod_schema_name, dev_schema_table.TABLE_NAME);
+                            checked := TRUE;
+                            exit;
                     END IF;
-                    exit WHEN dev_table_columns%NOTFOUND and prod_table_columns%NOTFOUND;
-                    DBMS_OUTPUT.PUT_LINE('constraint loop: ');
+                    exit when dev_table_columns%NOTFOUND and prod_table_columns%NOTFOUND;
+    --                 DBMS_OUTPUT.PUT_LINE('TABLE LOOP: ');
                 END LOOP;
-                close dev_table_columns;
-                close prod_table_columns;
+                CLOSE dev_table_columns;
+                CLOSE prod_table_columns;
 
                 ELSE
+--                     DBMS_OUTPUT.PUT_LINE('Different tables: ' || dev_schema_table.TABLE_NAME);
                     priority_check(dev_schema_name, dev_schema_table.table_name);
-                    DBMS_OUTPUT.PUT_LINE('no constraint table: ' || dev_schema_table.TABLE_NAME);
+--                     DDL_CREATE_TABLE(dev_schema_name, prod_schema_name, dev_schema_table.TABLE_NAME);
+                    checked := true;
+                END IF;
+
+            IF checked = FALSE THEN
+
+                SELECT COUNT(*) INTO constraints_amount1
+                FROM ALL_CONSTRAINTS
+                WHERE OWNER = dev_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME;
+
+                SELECT COUNT(*) INTO constraints_amount2
+                FROM ALL_CONSTRAINTS
+                WHERE OWNER = prod_schema_name AND TABLE_NAME = dev_schema_table.TABLE_NAME;
+
+                IF constraints_amount1 = constraints_amount2 THEN
+                    OPEN dev_table_columns FOR
+                        SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, SEARCH_CONDITION
+                        FROM ALL_CONSTRAINTS
+                        WHERE OWNER = dev_schema_name and TABLE_NAME = dev_schema_table.TABLE_NAME
+                        ORDER BY CONSTRAINT_NAME;
+
+                    OPEN prod_table_columns FOR
+                        SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE, SEARCH_CONDITION
+                        FROM ALL_CONSTRAINTS
+                        WHERE OWNER = prod_schema_name and TABLE_NAME = dev_schema_table.TABLE_NAME
+                        ORDER BY CONSTRAINT_NAME;
+
+                    LOOP
+                        FETCH dev_table_columns INTO constraint_name1, constraint_type1, search_condition1;
+                        FETCH prod_table_columns INTO constraint_name2, constraint_type2, search_condition2;
+
+                        IF constraint_name1 <> constraint_name2 OR constraint_type1 <> constraint_type2
+                               OR search_condition1 <> search_condition2 THEN
+                            priority_check(dev_schema_name, dev_schema_table.table_name);
+--                             DBMS_OUTPUT.PUT_LINE('constraint structure table: ' || dev_schema_table.TABLE_NAME);
+--                             DDL_CREATE_TABLE(dev_schema_name, prod_schema_name, dev_schema_table.TABLE_NAME);
+                            exit;
+                        END IF;
+                        exit WHEN dev_table_columns%NOTFOUND and prod_table_columns%NOTFOUND;
+--                         DBMS_OUTPUT.PUT_LINE('constraint loop: ');
+                    END LOOP;
+                    close dev_table_columns;
+                    close prod_table_columns;
+
+                    ELSE
+                        priority_check(dev_schema_name, dev_schema_table.table_name);
+--                         DBMS_OUTPUT.PUT_LINE('no constraint table: ' || dev_schema_table.TABLE_NAME);
+--                         DDL_CREATE_TABLE(dev_schema_name, prod_schema_name,
+--                             dev_schema_table.TABLE_NAME);
+                END IF;
             END IF;
         END IF;
-
     END LOOP;
+
+    FOR tb in ddl_tab_create
+    LOOP
+        ddl_create_table(dev_schema_name, prod_schema_name, tb.table_name);
+    END LOOP;
+
 END;
 
+
 SELECT * FROM ALL_TABLES WHERE OWNER = 'DEV_SCHEMA' OR OWNER = 'PROD_SCHEMA' ORDER BY OWNER;
+ALTER TABLE dev_schema.tab1 DROP CONSTRAINT DEV_TAB1_FK_TAB2;
+ALTER TABLE dev_schema.tab2 DROP CONSTRAINT dev_tab2_fk_tab1;
 DROP TABLE dev_schema.tab3;
 DROP TABLE prod_schema.tab3;
 DROP TABLE dev_schema.tab2;
@@ -381,7 +414,8 @@ CREATE TABLE PROD_SCHEMA.tab3
     CONSTRAINT prod_tab3_pk PRIMARY KEY (id)
 );
 
-ALTER TABLE dev_schema.tab2 ADD CONSTRAINT dev_tab2_fk_tab3 FOREIGN KEY (id) REFERENCES DEV_SCHEMA.tab3 (id);
+ALTER TABLE dev_schema.tab2 ADD CONSTRAINT dev_tab2_fk_tab1 FOREIGN KEY (id) REFERENCES DEV_SCHEMA.tab1 (id);
+ALTER TABLE dev_schema.tab1 ADD CONSTRAINT dev_tab1_fk_tab2 FOREIGN KEY (id) REFERENCES DEV_SCHEMA.tab2 (id);
 
 ALTER TABLE dev_schema.tab3 ADD CONSTRAINT dev_tab3_fk_tab1 FOREIGN KEY (id) REFERENCES DEV_SCHEMA.tab1 (id);
 ALTER TABLE dev_schema.tab3 ADD CONSTRAINT dev_tab3_fk_tab2 FOREIGN KEY (id) REFERENCES DEV_SCHEMA.tab2 (id);
@@ -393,7 +427,51 @@ BEGIN
     get_tables('DEV_SCHEMA', 'PROD_SCHEMA');
 END;
 
-SELECT * FROM tables_priority;
+ALTER TABLE PROD_SCHEMA.tab3 DROP CONSTRAINT PROD_TAB3_PK;
 
+SELECT * FROM ALL_CONSTRAINTS WHERE OWNER = 'DEV_SCHEMA' OR OWNER = 'PROD_SCHEMA' AND CONSTRAINT_TYPE = 'P';
 
+SELECT * FROM tables_priority ORDER BY priority;
 SELECT * FROM ALL_TABLES WHERE OWNER = 'DEV_SCHEMA';
+
+
+CREATE OR REPLACE PROCEDURE compare_all(prod_schema_name VARCHAR2, dev_schema_name VARCHAR2)
+IS
+BEGIN
+    get_tables(dev_schema_name, prod_schema_name);
+    get_funcs_procs(dev_schema_name, prod_schema_name, 'PROCEDURE');
+    get_funcs_procs(dev_schema_name, prod_schema_name, 'FUNCTION');
+    get_indexes(dev_schema_name, prod_schema_name);
+    get_packages(dev_schema_name, prod_schema_name);
+end;
+
+BEGIN
+    compare_all('PROD_SCHEMA', 'DEV_SCHEMA');
+end;
+
+
+DROP TABLE PROD_SCHEMA.TAB2;
+CREATE TABLE PROD_SCHEMA.TAB2(
+	ID NUMBER(22) NOT NULL,
+	IND NUMBER(22),
+	NICKNAME VARCHAR2(15),
+	CONSTRAINT PROD_TAB2_PK PRIMARY KEY (ID ),
+	CONSTRAINT PROD_TAB2_FK_TAB3 FOREIGN KEY (ID) REFERENCES PROD_SCHEMA.TAB3(ID)
+);
+DROP TABLE PROD_SCHEMA.TAB1;
+CREATE TABLE PROD_SCHEMA.TAB1(
+	ID NUMBER(22) NOT NULL,
+	NM VARCHAR2(15),
+	OOPS NUMBER(22),
+	CONSTRAINT PROD_TAB1_PK PRIMARY KEY (ID ),
+	CONSTRAINT PROD_TAB1_FK_TAB2 FOREIGN KEY (ID) REFERENCES PROD_SCHEMA.TAB2(ID)
+);
+DROP TABLE PROD_SCHEMA.TAB3;
+CREATE TABLE PROD_SCHEMA.TAB3(
+	ID NUMBER(22) NOT NULL,
+	NAME VARCHAR2(15),
+	OOPS NUMBER(22),
+	CONSTRAINT PROD_TAB3_PK PRIMARY KEY (ID )
+);
+
+
